@@ -78,7 +78,6 @@ typedef struct {
 	int n_rows;				/* for vertical layout this is cols */
 	WnckPagerDisplayMode display_mode;
 	gboolean display_all;
-	gboolean wrap_workspaces;
 
 	GSettings* settings;
 } PagerData;
@@ -210,115 +209,6 @@ static void applet_change_background(MatePanelApplet* applet, MatePanelAppletBac
                 type == PANEL_NO_BACKGROUND ? GTK_SHADOW_NONE : GTK_SHADOW_IN);
 }
 
-/* Replacement for the default scroll handler that also cares about the wrapping property.
- * Alternative: Add behaviour to libwnck (to the WnckPager widget).
- */
-static gboolean applet_scroll(MatePanelApplet* applet, GdkEventScroll* event, PagerData* pager)
-{
-	GdkScrollDirection absolute_direction;
-	int index;
-	int n_workspaces;
-	int n_columns;
-	int in_last_row;
-
-	if (event->type != GDK_SCROLL)
-		return FALSE;
-
-	if (event->direction == GDK_SCROLL_SMOOTH)
-		return FALSE;
-
-	index = wnck_workspace_get_number(wnck_screen_get_active_workspace(pager->screen));
-	n_workspaces = wnck_screen_get_workspace_count(pager->screen);
-	n_columns = n_workspaces / pager->n_rows;
-
-	if (n_workspaces % pager->n_rows != 0)
-		n_columns++;
-
-	in_last_row    = n_workspaces % n_columns;
-
-	absolute_direction = event->direction;
-
-	if (gtk_widget_get_direction(GTK_WIDGET(applet)) == GTK_TEXT_DIR_RTL)
-	{
-		switch (event->direction)
-		{
-			case GDK_SCROLL_RIGHT:
-				absolute_direction = GDK_SCROLL_LEFT;
-				break;
-			case GDK_SCROLL_LEFT:
-				absolute_direction = GDK_SCROLL_RIGHT;
-				break;
-			default:
-				break;
-		}
-	}
-
-	switch (absolute_direction)
-	{
-		case GDK_SCROLL_DOWN:
-			if (index + n_columns < n_workspaces)
-			{
-				index += n_columns;
-			}
-			else if (pager->wrap_workspaces && index == n_workspaces - 1)
-			{
-				index = 0;
-			}
-			else if ((index < n_workspaces - 1 && index + in_last_row != n_workspaces - 1) || (index == n_workspaces - 1 && in_last_row != 0))
-			{
-				index = (index % n_columns) + 1;
-			}
-			break;
-
-		case GDK_SCROLL_RIGHT:
-			if (index < n_workspaces - 1)
-			{
-				index++;
-			}
-			else if (pager->wrap_workspaces)
-			{
-			        index = 0;
-			}
-			break;
-
-		case GDK_SCROLL_UP:
-			if (index - n_columns >= 0)
-			{
-				index -= n_columns;
-			}
-			else if (index > 0)
-			{
-				index = ((pager->n_rows - 1) * n_columns) + (index % n_columns) - 1;
-			}
-			else if (pager->wrap_workspaces)
-			{
-				index = n_workspaces - 1;
-			}
-
-			if (index >= n_workspaces)
-				index -= n_columns;
-			break;
-
-		case GDK_SCROLL_LEFT:
-			if (index > 0)
-			{
-				index--;
-			}
-			else if (pager->wrap_workspaces)
-			{
-				index = n_workspaces - 1;
-			}
-			break;
-		default:
-			g_assert_not_reached();
-			break;
-	}
-
-	wnck_workspace_activate(wnck_screen_get_workspace(pager->screen, index), event->time);
-
-	return TRUE;
-}
-
 static void destroy_pager(GtkWidget* widget, PagerData* pager)
 {
 	g_object_unref (pager->settings);
@@ -429,7 +319,7 @@ static void wrap_workspaces_changed(GSettings* settings, gchar* key, PagerData* 
 
 	value = g_settings_get_boolean (settings, key);
 
-	pager->wrap_workspaces = value;
+	wnck_pager_set_wrap_on_scroll(WNCK_PAGER(pager->pager), value);
 
 	if (pager->wrap_workspaces_toggle && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(pager->wrap_workspaces_toggle)) != value)
 	{
@@ -482,8 +372,6 @@ gboolean workspace_switcher_applet_fill(MatePanelApplet* applet)
 
 	display_names = g_settings_get_boolean(pager->settings, "display-workspace-names");
 
-	pager->wrap_workspaces = g_settings_get_boolean(pager->settings, "wrap-workspaces");
-
 	if (display_names)
 	{
 		pager->display_mode = WNCK_PAGER_DISPLAY_NAME;
@@ -508,15 +396,20 @@ gboolean workspace_switcher_applet_fill(MatePanelApplet* applet)
 			break;
 	}
 
-	pager->pager = wnck_pager_new();
+	GtkWidget *pager_widget = wnck_pager_new();
+	wnck_pager_set_shadow_type(WNCK_PAGER(pager_widget), GTK_SHADOW_IN);
+	wnck_pager_set_wrap_on_scroll(WNCK_PAGER(pager_widget),
+	                              g_settings_get_boolean(pager->settings,
+	                                                     "wrap-workspaces"));
+	pager->pager = pager_widget;
 	pager->screen = NULL;
 	pager->wm = PAGER_WM_UNKNOWN;
-	wnck_pager_set_shadow_type(WNCK_PAGER(pager->pager), GTK_SHADOW_IN);
+
 
 	GtkStyleContext *context;
 	context = gtk_widget_get_style_context (GTK_WIDGET (applet));
 	gtk_style_context_add_class (context, "wnck-applet");
-	context = gtk_widget_get_style_context (pager->pager);
+	context = gtk_widget_get_style_context (pager_widget);
 	gtk_style_context_add_class (context, "wnck-pager");
 
 	provider = gtk_css_provider_new ();
@@ -529,13 +422,10 @@ gboolean workspace_switcher_applet_fill(MatePanelApplet* applet)
 					GTK_STYLE_PROVIDER_PRIORITY_FALLBACK);
 	g_object_unref (provider);
 
-	g_signal_connect(G_OBJECT(pager->pager), "destroy", G_CALLBACK(destroy_pager), pager);
+	g_signal_connect(G_OBJECT(pager_widget), "destroy", G_CALLBACK(destroy_pager), pager);
 
-	/* overwrite default WnckPager widget scroll-event */
-	g_signal_connect(G_OBJECT(pager->pager), "scroll-event", G_CALLBACK(applet_scroll), pager);
-
-	gtk_container_add(GTK_CONTAINER(pager->applet), pager->pager);
-	gtk_widget_show(pager->pager);
+	gtk_container_add(GTK_CONTAINER(pager->applet), pager_widget);
+	gtk_widget_show(pager_widget);
 
 	g_signal_connect(G_OBJECT(pager->applet), "realize", G_CALLBACK(applet_realized), pager);
 	g_signal_connect(G_OBJECT(pager->applet), "unrealize", G_CALLBACK(applet_unrealized), pager);
@@ -853,8 +743,9 @@ static void setup_dialog(GtkBuilder* builder, PagerData* pager)
 	/* Wrap workspaces: */
 	if (pager->wrap_workspaces_toggle)
 	{
-		/* make sure the toggle button resembles the value of wrap_workspaces */
-		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pager->wrap_workspaces_toggle), pager->wrap_workspaces);
+		gboolean const wrap = wnck_pager_get_wrap_on_scroll(WNCK_PAGER(pager->pager));
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pager->wrap_workspaces_toggle),
+		                             wrap);
 	}
 
 	g_signal_connect(G_OBJECT(pager->wrap_workspaces_toggle), "toggled", (GCallback) wrap_workspaces_toggled, pager);
