@@ -20,5 +20,10 @@
       <summary>Move windows to current workspace when unminimized</summary>
       <description>If true, then when unminimizing a window, move it to the current workspace. Otherwise, switch to the workspace of the window.</description>
     </key>
+    <key name="enable-scroll" type="b">
+      <default>true</default>
+      <summary>Change window list scrolling behavior</summary>
+      <description>If true, scrolling on the window list will switch the current window. Otherwise, the scrolling will have no effect.</description>
+    </key>
   </schema>
 </schemalist>

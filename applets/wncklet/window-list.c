@@ -39,6 +39,7 @@ typedef struct {
 	gboolean include_all_workspaces;
 	WnckTasklistGroupingType grouping;
 	gboolean move_unminimized_windows;
+	gboolean enable_scroll;
 
 	GtkOrientation orientation;
 	int size;
@@ -55,6 +56,7 @@ typedef struct {
 	GtkWidget* minimized_windows_label;
 	GtkWidget* move_minimized_radio;
 	GtkWidget* change_workspace_radio;
+	GtkWidget* enable_scroll_check_button;
 
 	GSettings* settings;
 } TasklistData;
@@ -78,6 +80,7 @@ static void tasklist_update(TasklistData* tasklist)
 	wnck_tasklist_set_grouping(WNCK_TASKLIST(tasklist->tasklist), tasklist->grouping);
 	wnck_tasklist_set_include_all_workspaces(WNCK_TASKLIST(tasklist->tasklist), tasklist->include_all_workspaces);
 	wnck_tasklist_set_switch_workspace_on_unminimize(WNCK_TASKLIST(tasklist->tasklist), tasklist->move_unminimized_windows);
+	wnck_tasklist_set_scroll_enabled(WNCK_TASKLIST(tasklist->tasklist), tasklist->enable_scroll);
 }
 
 static void response_cb(GtkWidget* widget, int id, TasklistData* tasklist)
@@ -303,6 +306,15 @@ static void move_unminimized_windows_changed(GSettings* settings, gchar* key, Ta
 	tasklist_update_unminimization_radio(tasklist);
 }
 
+static void enable_scroll_changed(GSettings* settings, gchar* key, TasklistData* tasklist)
+{
+	tasklist->enable_scroll = g_settings_get_boolean(settings, key);
+	tasklist_update(tasklist);
+
+	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(tasklist->enable_scroll_check_button),
+	                             tasklist->enable_scroll);
+}
+
 static void setup_gsettings(TasklistData* tasklist)
 {
 	tasklist->settings = mate_panel_applet_settings_new (MATE_PANEL_APPLET (tasklist->applet), WINDOW_LIST_SCHEMA);
@@ -319,6 +331,10 @@ static void setup_gsettings(TasklistData* tasklist)
 					  "changed::move-unminimized-windows",
 					  G_CALLBACK (move_unminimized_windows_changed),
 					  tasklist);
+        g_signal_connect (tasklist->settings,
+                          "changed::enable-scroll",
+                          G_CALLBACK (enable_scroll_changed),
+                          tasklist);
 }
 
 static void applet_size_allocate(GtkWidget *widget, GtkAllocation *allocation, TasklistData *tasklist)
@@ -415,6 +431,8 @@ gboolean window_list_applet_fill(MatePanelApplet* applet)
 
 	tasklist->move_unminimized_windows = g_settings_get_boolean (tasklist->settings, "move-unminimized-windows");
 
+	tasklist->enable_scroll = g_settings_get_boolean (tasklist->settings, "enable-scroll");
+
 	tasklist->size = mate_panel_applet_get_size(applet);
 
 	switch (mate_panel_applet_get_orient(applet))
@@ -436,7 +454,6 @@ gboolean window_list_applet_fill(MatePanelApplet* applet)
 	wnck_tasklist_set_orientation (WNCK_TASKLIST (tasklist->tasklist), tasklist->orientation);
 	wnck_tasklist_set_middle_click_close (WNCK_TASKLIST (tasklist->tasklist), TRUE);
 #endif
-
 	wnck_tasklist_set_icon_loader(WNCK_TASKLIST(tasklist->tasklist), icon_loader_func, tasklist, NULL);
 
 	g_signal_connect(G_OBJECT(tasklist->tasklist), "destroy", G_CALLBACK(destroy_tasklist), tasklist);
@@ -580,6 +597,11 @@ static void move_minimized_toggled(GtkToggleButton* button, TasklistData* taskli
 	g_settings_set_boolean(tasklist->settings, "move-unminimized-windows", gtk_toggle_button_get_active(button));
 }
 
+static void enable_scroll_toggled(GtkToggleButton* button, TasklistData* tasklist)
+{
+	g_settings_set_boolean(tasklist->settings, "enable-scroll", gtk_toggle_button_get_active(button));
+}
+
 static void display_all_workspaces_toggled(GtkToggleButton* button, TasklistData* tasklist)
 {
 	g_settings_set_boolean(tasklist->settings, "display-all-workspaces", gtk_toggle_button_get_active(button));
@@ -636,6 +658,8 @@ static void setup_dialog(GtkBuilder* builder, TasklistData* tasklist)
 
 	setup_sensitivity(tasklist, builder, "move_minimized_radio", "change_workspace_radio", NULL, "move-unminimized-windows" /* key */);
 
+	tasklist->enable_scroll_check_button = WID("enable_scroll_check_button");
+
 	/* Window grouping: */
 	button = get_grouping_button(tasklist, tasklist->grouping);
 	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(button), TRUE);
@@ -650,6 +674,8 @@ static void setup_dialog(GtkBuilder* builder, TasklistData* tasklist)
 	/* move window when unminimizing: */
 	tasklist_update_unminimization_radio(tasklist);
 	g_signal_connect(G_OBJECT(tasklist->move_minimized_radio), "toggled", (GCallback) move_minimized_toggled, tasklist);
+
+	g_signal_connect(G_OBJECT(tasklist->enable_scroll_check_button), "toggled", (GCallback) enable_scroll_toggled, tasklist);
 
 	/* Tasklist content: */
 	tasklist_properties_update_content_radio (tasklist);
